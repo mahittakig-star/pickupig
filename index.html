@@ -658,7 +658,7 @@ document.getElementById("modal").addEventListener("click", function(e) {
 
 setInterval(updateClock, 1000);
 updateClock();
-
+updateDate();
 async function init() {
   document.getElementById("queue").innerHTML = '<div class="empty">กำลังโหลดข้อมูล...</div>';
   await loadMenuItems();
