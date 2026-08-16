@@ -14,10 +14,9 @@
     align-items: center;
   }
   header h1 { margin: 0; font-size: 26px; }
-  #clock { 
-    font-size: 18px; 
-    margin-right: auto;
-  }
+  #clock { font-size: 18px; margin-left: auto;}
+  #date { font-size: 14px; margin-left: auto; }
+  
   .toolbar {
     padding: 18px 28px;
     display: flex;
