@@ -643,7 +643,7 @@ function updateClock() {
 
 function updateDate() {
   document.getElementById("date").textContent =
-    new Date().toLocaleDateString("en-US", {weekday:"long", day:"numeric", month:"long", year:"numeric"});
+    new Date().toLocaleDateString("th", {weekday:"long", day:"numeric", month:"long", year:"numeric"});
 }
 
 document.getElementById("settingsModal").addEventListener("click", function(e) {
