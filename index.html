@@ -9,8 +9,9 @@
 <body>
 
 <header>
-  <h1>🍳 Kitchen Queue</h1>
+  <h1>🍳Pick Your Pig (เลือกหมูของคุณ) Kitchen Queue</h1>
   <div id="clock"></div>
+  <div id="date"></div>
 </header>
 
 <div class="toolbar">
@@ -633,6 +634,10 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, c => ({
     "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;"
   }[c]));
+}
+
+function dateToThaiString(date) {
+  return date.toLocaleDateString("th-TH", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
 }
 
 function updateClock() {
