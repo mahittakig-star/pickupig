@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kitchen Queue</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <h1>🍳 Kitchen Queue</h1>
+  <div id="clock"></div>
+</header>
+
+<div class="toolbar">
+  <button class="add" onclick="openModal()">+ เพิ่มออเดอร์</button>
+  <button class="clear" onclick="clearDone()">ล้างรายการเสร็จ</button>
+  <button onclick="openReport()">📊 รายงานรายวัน</button>
+  <button onclick="openSettings()">⚙️ ตั้งค่า</button>
+  <select class="filter" id="filter" onchange="render()">
+    <option value="all">แสดงทั้งหมด</option>
+    <option value="waiting">รอทำ</option>
+    <option value="cooking">กำลังทำ</option>
+    <option value="done">เสร็จแล้ว</option>
+  </select>
+</div>
+
+<section class="summary">
+  <div class="stat"><small>ออเดอร์ทั้งหมด</small><strong id="total">0</strong></div>
+  <div class="stat"><small>รอทำ</small><strong id="waiting">0</strong></div>
+  <div class="stat"><small>กำลังทำ</small><strong id="cooking">0</strong></div>
+  <div class="stat"><small>เสร็จแล้ว</small><strong id="done">0</strong></div>
+</section>
+
+<main class="queue" id="queue"></main>
+
+<div class="modal" id="reportModal">
+  <div class="modal-box" style="max-width:900px">
+    <div class="report-header">
+      <h2>📊 รายงานออเดอร์รายวัน</h2>
+      <button class="delete" onclick="closeReport()">✕ ปิด</button>
+    </div>
+    <label>เลือกวันที่</label>
+    <input id="reportDate" type="date" onchange="renderReport()">
+    <div id="reportContent" style="margin-top:20px"></div>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <h2>เพิ่มออเดอร์</h2>
+
+    <label>เลขคิว (เว้นว่างให้ระบบออกให้อัตโนมัติ)</label>
+    <input id="queueNo" type="number" min="1" placeholder="เช่น 105">
+
+    <label>เลขออเดอร์ (เช่น เลขอ้างอิงจาก Grab/Lineman/ShopeeFood)</label>
+    <input id="orderNo" placeholder="เช่น GF-88213 (ไม่บังคับ)">
+
+    <label>ชื่อลูกค้า / โต๊ะ</label>
+    <input id="customer" placeholder="เช่น โต๊ะ 5 หรือ คุณสมชาย" oninput="onCustomerInput()">
+
+    <label>ประเภทการส่ง</label>
+    <select id="deliveryType" onchange="onDeliveryTypeChange()">
+      <option value="store">หน้าร้าน</option>
+      <option value="grab">Grab</option>
+      <option value="lineman">Lineman</option>
+      <option value="shopeefood">ShopeeFood</option>
+    </select>
+
+    <label>เมนูยอดนิยม (กดเพื่อเพิ่ม)</label>
+    <div class="menu-grid" id="menuGrid"></div>
+
+    <label>รายการอาหาร</label>
+    <div id="items">
+      <div class="item-row">
+        <input class="food" placeholder="เช่น ไก่ย่าง">
+        <input class="qty" type="number" min="1" value="1">
+      </div>
+    </div>
+
+    <button onclick="addFoodRow()">+ เพิ่มรายการอาหาร</button>
+
+    <div class="modal-actions">
+      <button class="delete" onclick="closeModal()">ยกเลิก</button>
+      <button class="add" onclick="addOrder()">บันทึกออเดอร์</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="settingsModal">
+  <div class="modal-box" style="max-width:520px">
+    <div class="report-header">
+      <h2>⚙️ ตั้งค่า</h2>
+      <button class="delete" onclick="closeSettings()">✕ ปิด</button>
+    </div>
+
+    <label>เพิ่มเมนู</label>
+    <div style="display:flex; gap:8px;">
+      <input id="newMenuItem" placeholder="เช่น ผัดกะเพราหมู" onkeydown="if(event.key==='Enter'){event.preventDefault();addMenuItem();}" style="flex:2;">
+      <input id="newMenuPrice" type="number" min="0" step="1" placeholder="ราคา" onkeydown="if(event.key==='Enter'){event.preventDefault();addMenuItem();}" style="flex:1;">
+      <button class="add" style="white-space:nowrap;" onclick="addMenuItem()">+ เพิ่ม</button>
+    </div>
+
+    <label style="margin-top:20px;">รายการเมนูทั้งหมด</label>
+    <div id="menuItemList" class="menu-item-list"></div>
+
+    <label style="margin-top:24px; color:#dc2626;">โซนอันตราย</label>
+    <button class="delete" style="width:100%; background:#fee2e2; color:#b91c1c;" onclick="clearAllData()">🗑️ ล้างข้อมูลออเดอร์ทั้งหมด</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ============================================
+// SUPABASE CONFIG — fill these in from your Supabase project
+// Settings > API > Project URL / anon public key
+// ============================================
+const SUPABASE_URL = "YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let orders = [];
+
+function rowToOrder(row) {
+  return {
+    id: row.id,
+    no: row.queue_no,
+    orderNo: row.order_no,
+    customer: row.customer,
+    deliveryType: row.delivery_type,
+    items: row.items || [],
+    status: row.status,
+    created: row.created_at,
+    completed: row.completed_at
+  };
+}
+
+async function loadOrders() {
+  const { data, error } = await sb.from("orders").select("*").order("queue_no", { ascending: true });
+  if (error) {
+    console.error(error);
+    document.getElementById("queue").innerHTML =
+      `<div class="empty">โหลดข้อมูลไม่สำเร็จ: ${escapeHtml(error.message)}<br>ตรวจสอบ SUPABASE_URL / ANON_KEY ในไฟล์</div>`;
+    return;
+  }
+  orders = (data || []).map(rowToOrder);
+}
+
+const DEFAULT_MENU_ITEMS = [
+  { name: "ไก่ย่าง", price: 80 },
+  { name: "คอหมูย่าง", price: 60 },
+  { name: "หมูสามชั้นย่าง", price: 60 },
+  { name: "ข้าวเหนียว", price: 10 },
+  { name: "ข้าวสวย", price: 10 },
+  { name: "ส้มตำไทย", price: 40 },
+  { name: "ส้มตำปู", price: 50 },
+  { name: "เกี๊ยวทอด", price: 40 },
+  { name: "ปีกไก่ทอด", price: 50 },
+  { name: "ลาบหมู", price: 50 },
+  { name: "น้ำตกหมู", price: 50 },
+  { name: "ต้มแซ่บ", price: 60 },
+  { name: "ไข่เจียว", price: 30 },
+  { name: "น้ำจิ้มแจ่ว", price: 10 },
+  { name: "น้ำอัดลม", price: 20 }
+];
+
+let MENU_ITEMS = [];
+
+async function loadMenuItems() {
+  const { data, error } = await sb.from("menu_items").select("*").order("name", { ascending: true });
+  if (error) {
+    console.error(error);
+    MENU_ITEMS = DEFAULT_MENU_ITEMS.slice();
+    return;
+  }
+  if (!data || !data.length) {
+    const { data: seeded, error: seedError } = await sb
+      .from("menu_items")
+      .insert(DEFAULT_MENU_ITEMS)
+      .select();
+    MENU_ITEMS = seedError ? DEFAULT_MENU_ITEMS.slice() : seeded.map(r => ({ id: r.id, name: r.name, price: r.price }));
+  } else {
+    MENU_ITEMS = data.map(r => ({ id: r.id, name: r.name, price: r.price }));
+  }
+}
+
+let isAutoCustomer = true;
+
+function renderMenuGrid() {
+  const grid = document.getElementById("menuGrid");
+  grid.innerHTML = MENU_ITEMS.map(item =>
+    `<button type="button" class="menu-btn" onclick="quickAddFood('${item.name.replace(/'/g,"\\'")}', this)">
+      <span>${escapeHtml(item.name)}</span>
+      ${item.price ? `<span class="menu-btn-price">฿${item.price}</span>` : ""}
+    </button>`
+  ).join("");
+}
+
+function openSettings() {
+  document.getElementById("settingsModal").classList.add("show");
+  renderMenuItemList();
+}
+
+function closeSettings() {
+  document.getElementById("settingsModal").classList.remove("show");
+  document.getElementById("newMenuItem").value = "";
+  document.getElementById("newMenuPrice").value = "";
+}
+
+function renderMenuItemList() {
+  const list = document.getElementById("menuItemList");
+  if (!MENU_ITEMS.length) {
+    list.innerHTML = `<div class="menu-item-empty">ยังไม่มีเมนู</div>`;
+    return;
+  }
+  list.innerHTML = MENU_ITEMS.map(item => `
+    <div class="menu-item-row">
+      <span>${escapeHtml(item.name)}</span>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input type="number" min="0" step="1" value="${item.price || 0}"
+          class="menu-price-input" style="width:80px;"
+          onchange="updateMenuPrice(${item.id}, this.value)">
+        <button class="remove-btn" onclick="removeMenuItem(${item.id})">ลบ</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function updateMenuPrice(id, value) {
+  const price = Math.max(0, Number(value) || 0);
+  const { error } = await sb.from("menu_items").update({ price }).eq("id", id);
+  if (error) {
+    alert("อัปเดตราคาไม่สำเร็จ: " + error.message);
+    return;
+  }
+  const item = MENU_ITEMS.find(m => m.id === id);
+  if (item) item.price = price;
+  renderMenuGrid();
+}
+
+async function addMenuItem() {
+  const nameInput = document.getElementById("newMenuItem");
+  const priceInput = document.getElementById("newMenuPrice");
+  const name = nameInput.value.trim();
+  const price = Math.max(0, Number(priceInput.value) || 0);
+  if (!name) return;
+  if (MENU_ITEMS.some(item => item.name === name)) {
+    alert("มีเมนูนี้อยู่แล้ว");
+    return;
+  }
+  const { data, error } = await sb.from("menu_items").insert({ name, price }).select().single();
+  if (error) {
+    alert("เพิ่มเมนูไม่สำเร็จ: " + error.message);
+    return;
+  }
+  MENU_ITEMS.push({ id: data.id, name: data.name, price: data.price });
+  nameInput.value = "";
+  priceInput.value = "";
+  renderMenuItemList();
+  renderMenuGrid();
+}
+
+async function removeMenuItem(id) {
+  const item = MENU_ITEMS.find(m => m.id === id);
+  if (!item) return;
+  if (!confirm(`ต้องการลบเมนู "${item.name}" หรือไม่?`)) return;
+  const { error } = await sb.from("menu_items").delete().eq("id", id);
+  if (error) {
+    alert("ลบเมนูไม่สำเร็จ: " + error.message);
+    return;
+  }
+  MENU_ITEMS = MENU_ITEMS.filter(m => m.id !== id);
+  renderMenuItemList();
+  renderMenuGrid();
+}
+
+async function clearAllData() {
+  if (!orders.length) {
+    alert("ไม่มีข้อมูลออเดอร์ให้ล้าง");
+    return;
+  }
+  if (!confirm("⚠️ ต้องการล้างข้อมูลออเดอร์ทั้งหมดหรือไม่?\nการกระทำนี้ไม่สามารถย้อนกลับได้")) return;
+  if (!confirm("ยืนยันอีกครั้ง: ลบออเดอร์ทั้งหมดถาวรใช่หรือไม่?")) return;
+  const { error } = await sb.from("orders").delete().neq("id", 0);
+  if (error) {
+    alert("ล้างข้อมูลไม่สำเร็จ: " + error.message);
+    return;
+  }
+  orders = [];
+  render();
+  closeSettings();
+}
+
+function quickAddFood(name, btnEl) {
+  const foodInputs = [...document.querySelectorAll(".food")];
+  const existing = foodInputs.find(input => input.value.trim() === name);
+
+  if (existing) {
+    const row = existing.closest(".item-row");
+    const qtyInput = row.querySelector(".qty");
+    qtyInput.value = (Number(qtyInput.value) || 0) + 1;
+  } else {
+    const emptyRow = foodInputs.find(input => !input.value.trim());
+    if (emptyRow) {
+      emptyRow.value = name;
+    } else {
+      document.getElementById("items").insertAdjacentHTML("beforeend", `
+        <div class="item-row">
+          <input class="food" value="${escapeHtml(name)}">
+          <input class="qty" type="number" min="1" value="1">
+        </div>`);
+    }
+  }
+
+  if (btnEl) {
+    btnEl.classList.add("added");
+    setTimeout(() => btnEl.classList.remove("added"), 400);
+  }
+}
+
+function onCustomerInput() {
+  isAutoCustomer = false;
+}
+
+function onDeliveryTypeChange() {
+  const type = document.getElementById("deliveryType").value;
+  const labels = { grab: "Grab", lineman: "Lineman", shopeefood: "ShopeeFood", store: "" };
+
+  if (!isAutoCustomer) return;
+
+  const customerInput = document.getElementById("customer");
+  if (type === "store") {
+    customerInput.value = "";
+    return;
+  }
+
+  const countSameType = orders.filter(o => o.deliveryType === type).length;
+  customerInput.value = `${labels[type]} #${countSameType + 1}`;
+  isAutoCustomer = true;
+}
+
+function render() {
+  const filter = document.getElementById("filter").value;
+  const list = filter === "all" ? orders : orders.filter(o => o.status === filter);
+  const queue = document.getElementById("queue");
+
+  document.getElementById("total").textContent = orders.length;
+  document.getElementById("waiting").textContent = orders.filter(o => o.status === "waiting").length;
+  document.getElementById("cooking").textContent = orders.filter(o => o.status === "cooking").length;
+  document.getElementById("done").textContent = orders.filter(o => o.status === "done").length;
+
+  if (!list.length) {
+    queue.innerHTML = '<div class="empty">ไม่มีรายการในคิว</div>';
+    return;
+  }
+
+  queue.innerHTML = list.map(o => {
+    const statusText = {
+      waiting: "รอทำ",
+      cooking: "กำลังทำ",
+      done: "เสร็จแล้ว"
+    }[o.status];
+
+    const deliveryLabels = { store: "หน้าร้าน", grab: "Grab", lineman: "Lineman", shopeefood: "ShopeeFood" };
+    const dType = o.deliveryType || "store";
+    const deliveryBadge = `<span class="delivery-badge delivery-${dType}">${deliveryLabels[dType]}</span>`;
+
+    const items = o.items.map(i =>
+      `<div class="item"><span>${escapeHtml(i.name)}</span><strong>x${i.qty}${i.price ? ` <span class="item-price">฿${i.price * i.qty}</span>` : ""}</strong></div>`
+    ).join("");
+
+    const orderTotal = o.items.reduce((sum, i) => sum + (i.price || 0) * i.qty, 0);
+
+    let buttons = "";
+    if (o.status === "waiting") {
+      buttons = `<button class="cook" onclick="changeStatus(${o.id}, 'cooking')">เริ่มทำ</button>`;
+    } else if (o.status === "cooking") {
+      buttons = `<button class="finish" onclick="changeStatus(${o.id}, 'done')">ทำเสร็จแล้ว</button>`;
+    }
+
+    buttons += `<button class="delete" onclick="removeOrder(${o.id})">ลบ</button>`;
+
+    return `
+      <article class="card ${o.status}">
+        <div class="top">
+          <div class="queue-no">#${o.no}</div>
+          <div class="status">${statusText}</div>
+        </div>
+        <div class="customer">${escapeHtml(o.customer || "ไม่ระบุลูกค้า")}${deliveryBadge}</div>
+        ${o.orderNo ? `<div class="order-no-tag">เลขออเดอร์: ${escapeHtml(o.orderNo)}</div>` : ""}
+        <div class="items">${items}</div>
+        ${orderTotal ? `<div class="order-total">รวม ฿${orderTotal}</div>` : ""}
+        <div class="actions">${buttons}</div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function changeStatus(id, status) {
+  const order = orders.find(o => o.id === id);
+  if (!order) return;
+  const completedAt = status === "done" ? (order.completed || new Date().toISOString()) : order.completed;
+  const { error } = await sb.from("orders").update({ status, completed_at: completedAt }).eq("id", id);
+  if (error) {
+    alert("อัปเดตสถานะไม่สำเร็จ: " + error.message);
+    return;
+  }
+  order.status = status;
+  order.completed = completedAt;
+  render();
+}
+
+async function removeOrder(id) {
+  if (!confirm("ต้องการลบออเดอร์นี้หรือไม่?")) return;
+  const { error } = await sb.from("orders").delete().eq("id", id);
+  if (error) {
+    alert("ลบออเดอร์ไม่สำเร็จ: " + error.message);
+    return;
+  }
+  orders = orders.filter(o => o.id !== id);
+  render();
+}
+
+async function clearDone() {
+  if (!orders.some(o => o.status === "done")) {
+    alert("ไม่มีรายการที่เสร็จแล้วให้ล้าง");
+    return;
+  }
+  if (!confirm("ต้องการล้างรายการที่เสร็จแล้วทั้งหมดหรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้")) return;
+  const { error } = await sb.from("orders").delete().eq("status", "done");
+  if (error) {
+    alert("ล้างรายการไม่สำเร็จ: " + error.message);
+    return;
+  }
+  orders = orders.filter(o => o.status !== "done");
+  render();
+}
+
+function openModal() {
+  document.getElementById("modal").classList.add("show");
+  renderMenuGrid();
+}
+
+function closeModal() {
+  document.getElementById("modal").classList.remove("show");
+  document.getElementById("queueNo").value = "";
+  document.getElementById("orderNo").value = "";
+  document.getElementById("customer").value = "";
+  document.getElementById("deliveryType").value = "store";
+  isAutoCustomer = true;
+  document.getElementById("items").innerHTML = `
+    <div class="item-row">
+      <input class="food" placeholder="เช่น ไก่ย่าง">
+      <input class="qty" type="number" min="1" value="1">
+    </div>`;
+}
+
+function addFoodRow() {
+  document.getElementById("items").insertAdjacentHTML("beforeend", `
+    <div class="item-row">
+      <input class="food" placeholder="เช่น ข้าวเหนียว">
+      <input class="qty" type="number" min="1" value="1">
+    </div>`);
+}
+
+async function addOrder() {
+  const customer = document.getElementById("customer").value.trim() || "หน้าร้าน";
+  const deliveryType = document.getElementById("deliveryType").value;
+  const orderNo = document.getElementById("orderNo").value.trim();
+  const foods = [...document.querySelectorAll(".food")];
+  const qtys = [...document.querySelectorAll(".qty")];
+
+  const items = foods.map((input, i) => {
+    const name = input.value.trim();
+    const menuMatch = MENU_ITEMS.find(m => m.name === name);
+    return {
+      name,
+      qty: Math.max(1, Number(qtys[i].value) || 1),
+      price: menuMatch ? menuMatch.price : 0
+    };
+  }).filter(i => i.name);
+
+  if (!items.length) {
+    alert("กรุณาใส่รายการอาหาร");
+    return;
+  }
+
+  const queueNoInput = document.getElementById("queueNo").value.trim();
+  let no;
+  if (queueNoInput) {
+    no = Number(queueNoInput);
+    if (!no || no < 1) {
+      alert("กรุณาใส่เลขคิวให้ถูกต้อง");
+      return;
+    }
+    if (orders.some(o => o.no === no)) {
+      alert("เลขคิวนี้ถูกใช้ไปแล้ว กรุณาใส่เลขอื่น");
+      return;
+    }
+  } else {
+    const maxNo = orders.reduce((max, o) => Math.max(max, o.no || 100), 100);
+    no = maxNo + 1;
+  }
+
+  const { data, error } = await sb.from("orders").insert({
+    queue_no: no,
+    order_no: orderNo || null,
+    customer,
+    delivery_type: deliveryType,
+    items,
+    status: "waiting"
+  }).select().single();
+
+  if (error) {
+    alert("เพิ่มออเดอร์ไม่สำเร็จ: " + error.message);
+    return;
+  }
+
+  orders.push(rowToOrder(data));
+  closeModal();
+  render();
+}
+
+
+function openReport() {
+  document.getElementById("reportModal").classList.add("show");
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById("reportDate").value = today;
+  renderReport();
+}
+
+function closeReport() {
+  document.getElementById("reportModal").classList.remove("show");
+}
+
+function renderReport() {
+  const selected = document.getElementById("reportDate").value;
+  if (!selected) return;
+
+  const dayOrders = orders.filter(o => {
+    const d = new Date(o.completed || o.created);
+    const local = d.getFullYear() + "-" +
+      String(d.getMonth()+1).padStart(2,"0") + "-" +
+      String(d.getDate()).padStart(2,"0");
+    return local === selected;
+  });
+
+  const totalOrders = dayOrders.length;
+  const doneOrders = dayOrders.filter(o => o.status === "done").length;
+  const pendingOrders = dayOrders.filter(o => o.status !== "done").length;
+  const totalRevenue = dayOrders.reduce((sum, o) =>
+    sum + o.items.reduce((s, i) => s + (i.price || 0) * i.qty, 0), 0);
+
+  const foodMap = {};
+  dayOrders.forEach(o => {
+    o.items.forEach(i => {
+      foodMap[i.name] = (foodMap[i.name] || 0) + Number(i.qty || 0);
+    });
+  });
+
+  const foods = Object.entries(foodMap).sort((a,b) => b[1] - a[1]);
+
+  const dateText = new Date(selected + "T00:00:00").toLocaleDateString("th-TH", {
+    weekday:"long", day:"numeric", month:"long", year:"numeric"
+  });
+
+  document.getElementById("reportContent").innerHTML = `
+    <h3>${dateText}</h3>
+
+    <div class="report-grid">
+      <div class="report-box">
+        <small>ออเดอร์ทั้งหมด</small>
+        <strong>${totalOrders}</strong>
+      </div>
+      <div class="report-box">
+        <small>ทำเสร็จแล้ว</small>
+        <strong>${doneOrders}</strong>
+      </div>
+      <div class="report-box">
+        <small>ยังไม่เสร็จ</small>
+        <strong>${pendingOrders}</strong>
+      </div>
+      <div class="report-box">
+        <small>ยอดขายรวม</small>
+        <strong>฿${totalRevenue}</strong>
+      </div>
+    </div>
+
+    <h3>รายการอาหารที่ขาย/ทำในวันนั้น</h3>
+    ${foods.length ? `
+      <table class="report-table">
+        <thead>
+          <tr><th>รายการอาหาร</th><th>จำนวน</th></tr>
+        </thead>
+        <tbody>
+          ${foods.map(([name,qty]) => `
+            <tr><td>${escapeHtml(name)}</td><td>${qty}</td></tr>
+          `).join("")}
+        </tbody>
+      </table>
+    ` : `<div class="empty" style="padding:30px">ไม่มีออเดอร์ในวันนี้</div>`}
+
+    <h3 style="margin-top:25px">รายละเอียดออเดอร์</h3>
+    ${dayOrders.length ? `
+      <table class="report-table">
+        <thead>
+          <tr><th>คิว</th><th>เลขออเดอร์</th><th>ลูกค้า</th><th>ส่งโดย</th><th>รายการ</th><th>ยอดรวม</th><th>สถานะ</th><th>เวลา</th></tr>
+        </thead>
+        <tbody>
+          ${dayOrders.map(o => {
+            const deliveryLabels = { store: "หน้าร้าน", grab: "Grab", lineman: "Lineman", shopeefood: "ShopeeFood" };
+            const orderTotal = o.items.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
+            return `
+            <tr>
+              <td>#${o.no}</td>
+              <td>${o.orderNo ? escapeHtml(o.orderNo) : "-"}</td>
+              <td>${escapeHtml(o.customer)}</td>
+              <td>${deliveryLabels[o.deliveryType || "store"]}</td>
+              <td>${o.items.map(i => escapeHtml(i.name)+" x"+i.qty).join(", ")}</td>
+              <td>฿${orderTotal}</td>
+              <td>${o.status === "done" ? "เสร็จแล้ว" : o.status === "cooking" ? "กำลังทำ" : "รอทำ"}</td>
+              <td>${new Date(o.completed || o.created).toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit"})}</td>
+            </tr>
+          `}).join("")}
+        </tbody>
+      </table>
+    ` : ""}
+  `;
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;"
+  }[c]));
+}
+
+function updateClock() {
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("th-TH", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+}
+
+document.getElementById("settingsModal").addEventListener("click", function(e) {
+  if (e.target === this) closeSettings();
+});
+document.getElementById("reportModal").addEventListener("click", function(e) {
+  if (e.target === this) closeReport();
+});
+document.getElementById("modal").addEventListener("click", function(e) {
+  if (e.target === this) closeModal();
+});
+
+setInterval(updateClock, 1000);
+updateClock();
+
+async function init() {
+  document.getElementById("queue").innerHTML = '<div class="empty">กำลังโหลดข้อมูล...</div>';
+  await loadMenuItems();
+  await loadOrders();
+  render();
+  setupRealtime();
+}
+
+function setupRealtime() {
+  sb.channel("orders-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+      loadOrders().then(render);
+    })
+    .subscribe();
+
+  sb.channel("menu-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "menu_items" }, () => {
+      loadMenuItems().then(() => {
+        renderMenuGrid();
+        if (document.getElementById("settingsModal").classList.contains("show")) {
+          renderMenuItemList();
+        }
+      });
+    })
+    .subscribe();
+}
+
+init();
+</script>
+</body>
+</html>
